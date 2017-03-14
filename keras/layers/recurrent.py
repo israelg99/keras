@@ -227,8 +227,7 @@ class Recurrent(Layer):
         if self.return_state:
             state_mask = [None for _ in self.states]
             return [output_mask] + state_mask
-        else:
-            return output_mask
+        return output_mask
 
     def step(self, inputs, states, is_output=False):
         raise NotImplementedError
@@ -345,8 +344,7 @@ class Recurrent(Layer):
             else:
                 states = list(states)
             return [output] + states
-        else:
-            return output
+        return output
 
     def reset_states(self, states_value=None):
         if not self.stateful:
