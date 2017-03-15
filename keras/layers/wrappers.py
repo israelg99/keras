@@ -140,7 +140,7 @@ class TimeDistributed(Wrapper):
 
         # Apply activity regularizer if any:
         if (hasattr(self.layer, 'activity_regularizer') and
-           self.layer.activity_regularizer is not None):
+            self.layer.activity_regularizer is not None):
             regularization_loss = self.layer.activity_regularizer(y)
             self.add_loss(regularization_loss, inputs)
         return y
@@ -199,30 +199,63 @@ class Bidirectional(Wrapper):
         self.backward_layer.set_weights(weights[nw // 2:])
 
     def compute_output_shape(self, input_shape):
-        if self.merge_mode in ['sum', 'ave', 'mul']:
-            return self.forward_layer.compute_output_shape(input_shape)
-        elif self.merge_mode == 'concat':
-            shape = list(self.forward_layer.compute_output_shape(input_shape))
-            shape[-1] *= 2
-            return tuple(shape)
+        output_shape = self.forward_layer.compute_output_shape(input_shape)
+        if self.merge_mode == 'concat':
+            if self.forward_layer.return_state:
+                list_out = list(output_shape[0])
+                list_out[-1] *= 2
+                output_shape[0] = tuple(list_out)
+                output_shape.append(output_shape[-1])
+            else:
+                output_shape = list(output_shape)
+                output_shape[-1] *= 2
+                output_shape = tuple(output_shape)
+        elif self.merge_mode is not None and \
+             self.forward_layer.return_state:
+                output_shape.append(output_shape[-1])
         elif self.merge_mode is None:
-            return [self.forward_layer.compute_output_shape(input_shape)] * 2
+            if self.forward_layer.return_state:
+                output_shape.append(output_shape[-1])
+                output_shape.insert(0, output_shape[0])
+            else:
+                output_shape = [output_shape]*2
+
+        return output_shape
 
     def call(self, inputs, mask=None):
+        states = []
+
         y = self.forward_layer.call(inputs, mask)
         y_rev = self.backward_layer.call(inputs, mask)
+
+        if self.forward_layer.return_state:
+            states.extend(y[1:])
+            states.extend(y_rev[1:])
+            y = y[0]
+            y_rev = y_rev[0]
+
         if self.return_sequences:
             y_rev = K.reverse(y_rev, 1)
         if self.merge_mode == 'concat':
-            return K.concatenate([y, y_rev])
+            output = K.concatenate([y, y_rev])
         elif self.merge_mode == 'sum':
-            return y + y_rev
+            output = y + y_rev
         elif self.merge_mode == 'ave':
-            return (y + y_rev) / 2
+            output = (y + y_rev) / 2
         elif self.merge_mode == 'mul':
-            return y * y_rev
+            output = y * y_rev
         elif self.merge_mode is None:
-            return [y, y_rev]
+            output = [y, y_rev]
+
+        if states == []:
+            return output
+
+        if isinstance(output, (list, tuple)):
+            output = list(output)
+        else:
+            output = [output]
+
+        return output + states
 
     def reset_states(self):
         self.forward_layer.reset_states()
@@ -236,11 +269,16 @@ class Bidirectional(Wrapper):
     def compute_mask(self, inputs, mask):
         if self.return_sequences:
             if not self.merge_mode:
-                return [mask, mask]
+                out_mask = [mask, mask]
             else:
-                return mask
+                out_mask = [mask]
         else:
-            return None
+            out_mask = [None]
+
+        if self.forward_layer.return_state:
+            out_mask += [None]*2
+
+        return out_mask
 
     @property
     def trainable_weights(self):
