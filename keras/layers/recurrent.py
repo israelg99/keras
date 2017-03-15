@@ -92,6 +92,8 @@ class Recurrent(Layer):
             `[(input_dim, output_dim), (output_dim, output_dim), (output_dim,)]`.
         return_sequences: Boolean. Whether to return the last output
             in the output sequence, or the full sequence.
+        return_state: Boolean. Whether to return the last state
+            in addition to the output.
         go_backwards: Boolean (default False).
             If True, process the input sequence backwards.
         stateful: Boolean (default False). If True, the last state
@@ -128,12 +130,18 @@ class Recurrent(Layer):
             in your model, you would need to specify the input length
             at the level of the first layer
             (e.g. via the `input_shape` argument)
+        output_length: Length of output sequences.
+            When greater than input length, the RNN output will be used as input.
+            `unroll` must be true.
 
     # Input shapes
         3D tensor with shape `(batch_size, timesteps, input_dim)`,
         (Optional) 2D tensors with shape `(batch_size, output_dim)`.
 
     # Output shape
+        - if `return_state`: a list of tensors. The first tensor is
+            the ouput. The remaining tensors are the state, with shape
+            `(batch_size, units)`.
         - if `return_sequences`: 3D tensor with shape
             `(batch_size, timesteps, units)`.
         - else, 2D tensor with shape `(batch_size, units)`.
@@ -173,17 +181,21 @@ class Recurrent(Layer):
     """
 
     def __init__(self, return_sequences=False,
+                 return_state=False,
                  go_backwards=False,
                  stateful=False,
                  unroll=False,
                  implementation=0,
+                 output_length=None,
                  **kwargs):
         super(Recurrent, self).__init__(**kwargs)
         self.return_sequences = return_sequences
+        self.return_state = return_state
         self.go_backwards = go_backwards
         self.stateful = stateful
         self.unroll = unroll
         self.implementation = implementation
+        self.output_length = output_length
         self.supports_masking = True
         self.input_spec = InputSpec(ndim=3)
         self.state_spec = None
@@ -193,18 +205,31 @@ class Recurrent(Layer):
     def compute_output_shape(self, input_shape):
         if isinstance(input_shape, list):
             input_shape = input_shape[0]
+
         if self.return_sequences:
-            return (input_shape[0], input_shape[1], self.units)
+            timesteps = input_shape[1]
+            if self.output_length:
+                timesteps = self.output_length
+            output_shape = (input_shape[0], timesteps, self.units)
         else:
-            return (input_shape[0], self.units)
+            output_shape = (input_shape[0], self.units)
+
+        if self.return_state:
+            state_shape = [(input_shape[0], self.units) for _ in self.states]
+            return [output_shape] + state_shape
+        else:
+            return output_shape
 
     def compute_mask(self, inputs, mask):
-        if self.return_sequences:
-            return mask
-        else:
-            return None
+        if isinstance(mask, list):
+            mask = mask[0]
+        output_mask = mask if self.return_sequences else None
+        if self.return_state:
+            state_mask = [None for _ in self.states]
+            return [output_mask] + state_mask
+        return output_mask
 
-    def step(self, inputs, states):
+    def step(self, inputs, states, is_output=False):
         raise NotImplementedError
 
     def get_constants(self, inputs, training=None):
@@ -229,6 +254,10 @@ class Recurrent(Layer):
         # modify the input spec to include the state.
         if initial_state is not None:
             if hasattr(initial_state, '_keras_history'):
+                with K.name_scope(self.name):
+                    if not self.built:
+                        self.call_build(inputs)
+
                 # Compute the full input spec, including state
                 input_spec = self.input_spec
                 state_spec = self.state_spec
@@ -295,7 +324,8 @@ class Recurrent(Layer):
                                              mask=mask,
                                              constants=constants,
                                              unroll=self.unroll,
-                                             input_length=input_shape[1])
+                                             input_length=input_shape[1],
+                                             output_length=self.output_length)
         if self.stateful:
             updates = []
             for i in range(len(states)):
@@ -308,9 +338,17 @@ class Recurrent(Layer):
             outputs._uses_learning_phase = True
 
         if self.return_sequences:
-            return outputs
+            output = outputs
         else:
-            return last_output
+            output = last_output
+
+        if self.return_state:
+            if not isinstance(states, (list, tuple)):
+                states = [states]
+            else:
+                states = list(states)
+            return [output] + states
+        return output
 
     def reset_states(self, states_value=None):
         if not self.stateful:
@@ -358,10 +396,12 @@ class Recurrent(Layer):
 
     def get_config(self):
         config = {'return_sequences': self.return_sequences,
+                  'return_state': self.return_state,
                   'go_backwards': self.go_backwards,
                   'stateful': self.stateful,
                   'unroll': self.unroll,
-                  'implementation': self.implementation}
+                  'implementation': self.implementation,
+                  'output_length': self.output_length}
         base_config = super(Recurrent, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
@@ -503,7 +543,7 @@ class SimpleRNN(Recurrent):
                                            timesteps,
                                            training=training)
 
-    def step(self, inputs, states):
+    def step(self, inputs, states, is_output=False):
         if self.implementation == 0:
             h = inputs
         else:
@@ -776,12 +816,12 @@ class GRU(Recurrent):
             constants.append([K.cast_to_floatx(1.) for _ in range(3)])
         return constants
 
-    def step(self, inputs, states):
+    def step(self, inputs, states, is_output=False):
         h_tm1 = states[0]  # previous memory
         dp_mask = states[1]  # dropout matrices for recurrent units
         rec_dp_mask = states[2]
 
-        if self.implementation == 2:
+        if self.implementation == 2 or is_output:
             matrix_x = K.dot(inputs * dp_mask[0], self.kernel)
             if self.use_bias:
                 matrix_x = K.bias_add(matrix_x, self.bias)
@@ -1066,13 +1106,13 @@ class LSTM(Recurrent):
             constants.append([K.cast_to_floatx(1.) for _ in range(4)])
         return constants
 
-    def step(self, inputs, states):
+    def step(self, inputs, states, is_output=False):
         h_tm1 = states[0]
         c_tm1 = states[1]
         dp_mask = states[2]
         rec_dp_mask = states[3]
 
-        if self.implementation == 2:
+        if self.implementation == 2 or is_output:
             z = K.dot(inputs * dp_mask[0], self.kernel)
             z += K.dot(h_tm1 * rec_dp_mask[0], self.recurrent_kernel)
             if self.use_bias:

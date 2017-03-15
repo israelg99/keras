@@ -497,33 +497,7 @@ class Layer(object):
         with K.name_scope(self.name):
             # Handle laying building (weight creating, input spec locking).
             if not self.built:
-                # Raise exceptions in case the input is not compatible
-                # with the input_spec specified in the layer constructor.
-                self.assert_input_compatibility(inputs)
-
-                # Collect input shapes to build layer.
-                input_shapes = []
-                for x_elem in _to_list(inputs):
-                    if hasattr(x_elem, '_keras_shape'):
-                        input_shapes.append(x_elem._keras_shape)
-                    elif hasattr(K, 'int_shape'):
-                        input_shapes.append(K.int_shape(x_elem))
-                    else:
-                        raise ValueError('You tried to call layer "' + self.name +
-                                         '". This layer has no information'
-                                         ' about its expected input shape, '
-                                         'and thus cannot be built. '
-                                         'You can build it manually via: '
-                                         '`layer.build(batch_input_shape)`')
-                if len(input_shapes) == 1:
-                    self.build(input_shapes[0])
-                else:
-                    self.build(input_shapes)
-                self.built = True
-
-                # Load weights that were specified at layer instantiation.
-                if self._initial_weights is not None:
-                    self.set_weights(self._initial_weights)
+                self.call_build(inputs)
 
             # Raise exceptions in case the input is not compatible
             # with the input_spec set at build time.
@@ -690,6 +664,35 @@ class Layer(object):
                 for weight shape computations.
         """
         self.built = True
+
+    def call_build(self, inputs):
+        # Raise exceptions in case the input is not compatible
+        # with the input_spec specified in the layer constructor.
+        self.assert_input_compatibility(inputs)
+
+        # Collect input shapes to build layer.
+        input_shapes = []
+        for x_elem in _to_list(inputs):
+            if hasattr(x_elem, '_keras_shape'):
+                input_shapes.append(x_elem._keras_shape)
+            elif hasattr(K, 'int_shape'):
+                input_shapes.append(K.int_shape(x_elem))
+            else:
+                raise ValueError('You tried to call layer "' + self.name +
+                                '". This layer has no information'
+                                ' about its expected input shape, '
+                                'and thus cannot be built. '
+                                'You can build it manually via: '
+                                '`layer.build(batch_input_shape)`')
+        if len(input_shapes) == 1:
+            self.build(input_shapes[0])
+        else:
+            self.build(input_shapes)
+        self.built = True
+
+        # Load weights that were specified at layer instantiation.
+        if self._initial_weights is not None:
+            self.set_weights(self._initial_weights)
 
     def _get_node_attribute_at_index(self, node_index, attr, attr_name):
         """Retrieves an attribute (e.g. input_tensors) from a node.

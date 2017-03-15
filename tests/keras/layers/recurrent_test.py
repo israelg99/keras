@@ -6,6 +6,8 @@ from keras.utils.test_utils import layer_test
 from keras.utils.test_utils import keras_test
 from keras.layers import recurrent
 from keras.layers import embeddings
+from keras.layers import Bidirectional
+from keras.layers import RepeatVector
 from keras.models import Sequential
 from keras.models import Model
 from keras.engine.topology import Input
@@ -217,6 +219,45 @@ def test_reset_states_with_values(layer_class):
     np.testing.assert_allclose(K.eval(layer.states[0]),
                                np.ones(K.int_shape(layer.states[0])),
                                atol=1e-4)
+
+
+@rnn_test
+def test_output_length(layer_class):
+    output_length = 10
+    input_length = 2
+    input_seq = Input((input_length, units))
+
+    models = []
+    conf = {'units': units, 'unroll': True, 'output_length': output_length}
+    for i in range(3):
+        conf['implementation'] = i
+        uni_rnn = layer_class(**conf)(input_seq)
+        bi_rnn = Bidirectional(layer_class(return_sequences=True, **conf),
+                               merge_mode='sum')(RepeatVector(1)(uni_rnn))
+        models.append(Model(input_seq, bi_rnn))
+        models[-1].compile(loss='mse', optimizer='adam')
+
+    inputs = np.random.random((num_samples, input_length, units))
+    targets = np.random.random((num_samples, output_length, units))
+
+    for model in models:
+        model.fit(inputs, targets)
+
+
+@rnn_test
+def test_return_state(layer_class):
+    num_states = 2 if layer_class is recurrent.LSTM else 1
+
+    inputs = Input(batch_shape=(num_samples, timesteps, embedding_dim))
+    layer = layer_class(units, return_state=True, stateful=True)
+    outputs = layer(inputs)
+    output, state = outputs[0], outputs[1:]
+    assert len(state) == num_states
+    model = Model(inputs, state[0])
+
+    inputs = np.random.random((num_samples, timesteps, embedding_dim))
+    state = model.predict(inputs)
+    np.testing.assert_allclose(K.eval(layer.states[0]), state, atol=1e-4)
 
 if __name__ == '__main__':
     pytest.main([__file__])
