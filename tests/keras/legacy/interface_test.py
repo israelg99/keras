@@ -2,6 +2,7 @@ import pytest
 import json
 from keras.utils.test_utils import keras_test
 import keras
+import numpy as np
 
 
 @keras_test
@@ -110,6 +111,16 @@ def test_lstm_legacy_interface():
 
     old_layer = keras.layers.LSTM(input_shape=[3, 5], output_dim=2, name='d', consume_less='mem')
     new_layer = keras.layers.LSTM(2, input_shape=[3, 5], name='d', implementation=1)
+    assert json.dumps(old_layer.get_config()) == json.dumps(new_layer.get_config())
+
+    old_layer = keras.layers.LSTM(input_dim=5, input_length=3,
+                                  output_dim=2, name='d', consume_less='mem')
+    new_layer = keras.layers.LSTM(2, input_shape=[3, 5], name='d', implementation=1)
+    assert json.dumps(old_layer.get_config()) == json.dumps(new_layer.get_config())
+
+    old_layer = keras.layers.LSTM(input_dim=5,
+                                  output_dim=2, name='d', consume_less='mem')
+    new_layer = keras.layers.LSTM(2, input_shape=[None, 5], name='d', implementation=1)
     assert json.dumps(old_layer.get_config()) == json.dumps(new_layer.get_config())
 
     old_layer = keras.layers.LSTM(input_shape=[3, 5], output_dim=2, name='d', consume_less='gpu')
@@ -758,6 +769,44 @@ def test_cropping3d_legacy_interface():
 
 
 @keras_test
+def test_generator_methods_interface():
+    def train_generator():
+        x = np.random.randn(2, 2)
+        y = np.random.randint(0, 2, size=[2, 1])
+        while True:
+            yield (x, y)
+
+    def val_generator():
+        x = np.random.randn(2, 2)
+        y = np.random.randint(0, 2, size=[2, 1])
+        while True:
+            yield (x, y)
+
+    def pred_generator():
+        x = np.random.randn(1, 2)
+        while True:
+            yield x
+
+    x = keras.layers.Input(shape=(2, ))
+    y = keras.layers.Dense(2)(x)
+
+    model = keras.models.Model(inputs=x, outputs=y)
+    model.compile(optimizer='rmsprop',
+                  loss='sparse_categorical_crossentropy',
+                  metrics=['accuracy'])
+    model.fit_generator(generator=train_generator(),
+                        samples_per_epoch=1,
+                        validation_data=val_generator(),
+                        nb_val_samples=1,
+                        nb_worker=1)
+    model.evaluate_generator(generator=train_generator(),
+                             val_samples=2,
+                             nb_worker=1)
+    model.predict_generator(generator=pred_generator(),
+                            val_samples=2,
+                            nb_worker=1)
+
+
 def test_spatialdropout1d_legacy_interface():
     old_layer = keras.layers.SpatialDropout1D(p=0.6, name='sd1d')
     new_layer_1 = keras.layers.SpatialDropout1D(rate=0.6, name='sd1d')

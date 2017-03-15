@@ -19,6 +19,7 @@ from .engine.topology import Layer
 from .engine.topology import Input
 from .legacy import layers as legacy_layers
 from .legacy import models as legacy_models
+from .legacy import interfaces
 
 try:
     import h5py
@@ -773,7 +774,7 @@ class Sequential(Model):
 
     def fit(self, x, y, batch_size=32, epochs=10, verbose=1, callbacks=None,
             validation_split=0., validation_data=None, shuffle=True,
-            class_weight=None, sample_weight=None, initial_epoch=0):
+            class_weight=None, sample_weight=None, initial_epoch=0, **kwargs):
         """Trains the model for a fixed number of epochs.
 
         # Arguments
@@ -820,6 +821,14 @@ class Sequential(Model):
         # Raises
             RuntimeError: if the model was never compiled.
         """
+        # Legacy support
+        if 'nb_epoch' in kwargs:
+            warnings.warn('The `nb_epoch` argument in `fit` '
+                          'has been renamed `epochs`.')
+            epochs = kwargs.pop('nb_epoch')
+        if kwargs:
+            raise TypeError('Unrecognized keyword arguments: ' + str(kwargs))
+
         if self.model is None:
             raise RuntimeError('The model needs to be compiled '
                                'before being used.')
@@ -990,6 +999,7 @@ class Sequential(Model):
         else:
             return (proba > 0.5).astype('int32')
 
+    @interfaces.legacy_generator_methods_support
     def fit_generator(self, generator,
                       steps_per_epoch,
                       epochs=1,
@@ -1086,6 +1096,7 @@ class Sequential(Model):
                                         pickle_safe=pickle_safe,
                                         initial_epoch=initial_epoch)
 
+    @interfaces.legacy_generator_methods_support
     def evaluate_generator(self, generator, steps,
                            max_q_size=10, workers=1,
                            pickle_safe=False):
@@ -1125,6 +1136,7 @@ class Sequential(Model):
                                              workers=workers,
                                              pickle_safe=pickle_safe)
 
+    @interfaces.legacy_generator_methods_support
     def predict_generator(self, generator, steps,
                           max_q_size=10, workers=1, pickle_safe=False):
         """Generates predictions for the input samples from a data generator.

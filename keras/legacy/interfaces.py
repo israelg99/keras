@@ -2,12 +2,19 @@
 """
 import six
 import warnings
+import functools
+import numpy as np
 
 
 def generate_legacy_interface(allowed_positional_args=None,
                               conversions=None,
                               preprocessor=None,
-                              value_conversions=None):
+                              value_conversions=None,
+                              object_type='class'):
+    if allowed_positional_args is None:
+        check_positional_args = False
+    else:
+        check_positional_args = True
     allowed_positional_args = allowed_positional_args or []
     conversions = conversions or []
     value_conversions = value_conversions or []
@@ -15,20 +22,24 @@ def generate_legacy_interface(allowed_positional_args=None,
     def legacy_support(func):
         @six.wraps(func)
         def wrapper(*args, **kwargs):
-            layer_name = args[0].__class__.__name__
+            if object_type == 'class':
+                object_name = args[0].__class__.__name__
+            else:
+                object_name = func.__name__
             if preprocessor:
                 args, kwargs, converted = preprocessor(args, kwargs)
             else:
                 converted = []
-            if len(args) > len(allowed_positional_args) + 1:
-                raise TypeError('Layer `' + layer_name +
-                                '` can accept only ' +
-                                str(len(allowed_positional_args)) +
-                                ' positional arguments ' +
-                                str(tuple(allowed_positional_args)) + ', but '
-                                'you passed the following '
-                                'positional arguments: ' +
-                                str(list(args[1:])))
+            if check_positional_args:
+                if len(args) > len(allowed_positional_args) + 1:
+                    raise TypeError('`' + object_name +
+                                    '` can accept only ' +
+                                    str(len(allowed_positional_args)) +
+                                    ' positional arguments ' +
+                                    str(tuple(allowed_positional_args)) +
+                                    ', but you passed the following '
+                                    'positional arguments: ' +
+                                    str(list(args[1:])))
             for key in value_conversions:
                 if key in kwargs:
                     old_value = kwargs[key]
@@ -42,12 +53,18 @@ def generate_legacy_interface(allowed_positional_args=None,
                     kwargs[new_name] = value
                     converted.append((new_name, old_name))
             if converted:
-                signature = '`' + layer_name + '('
+                signature = '`' + object_name + '('
                 for i, value in enumerate(args[1:]):
                     if isinstance(value, six.string_types):
                         signature += '"' + value + '"'
                     else:
-                        signature += str(value)
+                        if isinstance(value, np.ndarray):
+                            str_val = 'array'
+                        else:
+                            str_val = str(value)
+                        if len(str_val) > 10:
+                            str_val = str_val[:10] + '...'
+                        signature += str_val
                     if i < len(args[1:]) - 1 or kwargs:
                         signature += ', '
                 for i, (name, value) in enumerate(kwargs.items()):
@@ -55,15 +72,25 @@ def generate_legacy_interface(allowed_positional_args=None,
                     if isinstance(value, six.string_types):
                         signature += '"' + value + '"'
                     else:
-                        signature += str(value)
+                        if isinstance(value, np.ndarray):
+                            str_val = 'array'
+                        else:
+                            str_val = str(value)
+                        if len(str_val) > 10:
+                            str_val = str_val[:10] + '...'
+                        signature += str_val
                     if i < len(kwargs) - 1:
                         signature += ', '
                 signature += ')`'
-                warnings.warn('Update your `' + layer_name +
-                              '` layer call to the Keras 2 API: ' + signature)
+                warnings.warn('Update your `' + object_name +
+                              '` call to the Keras 2 API: ' + signature)
             return func(*args, **kwargs)
         return wrapper
     return legacy_support
+
+
+generate_legacy_method_interface = functools.partial(generate_legacy_interface,
+                                                     object_type='method')
 
 
 def raise_duplicate_arg_error(old_arg, new_arg):
@@ -121,7 +148,7 @@ legacy_gaussiannoise_support = generate_legacy_interface(
     conversions=[('sigma', 'stddev')])
 
 
-def lstm_args_preprocessor(args, kwargs):
+def recurrent_args_preprocessor(args, kwargs):
     converted = []
     if 'forget_bias_init' in kwargs:
         if kwargs['forget_bias_init'] == 'one':
@@ -132,7 +159,16 @@ def lstm_args_preprocessor(args, kwargs):
             kwargs.pop('forget_bias_init')
             warnings.warn('The `forget_bias_init` argument '
                           'has been ignored. Use `unit_forget_bias=True` '
-                          'instead to intialize with ones')
+                          'instead to intialize with ones.')
+    if 'input_dim' in kwargs:
+        input_length = kwargs.pop('input_length', None)
+        input_dim = kwargs.pop('input_dim')
+        input_shape = (input_length, input_dim)
+        kwargs['input_shape'] = input_shape
+        converted.append(('input_dim', 'input_shape'))
+        warnings.warn('The `input_dim` and `input_length` arguments '
+                      'in recurrent layers are deprecated. '
+                      'Use `input_shape` instead.')
     return args, kwargs, converted
 
 legacy_recurrent_support = generate_legacy_interface(
@@ -150,7 +186,7 @@ legacy_recurrent_support = generate_legacy_interface(
     value_conversions={'consume_less': {'cpu': 0,
                                         'mem': 1,
                                         'gpu': 2}},
-    preprocessor=lstm_args_preprocessor)
+    preprocessor=recurrent_args_preprocessor)
 
 legacy_gaussiandropout_support = generate_legacy_interface(
     allowed_positional_args=['rate'],
@@ -251,6 +287,11 @@ def conv2d_args_preprocessor(args, kwargs):
         if 'nb_row' in kwargs and 'nb_col' in kwargs:
             kernel_size = (kwargs.pop('nb_row'), kwargs.pop('nb_col'))
             args = [args[0], args[1], kernel_size]
+            converted.append(('kernel_size', 'nb_row/nb_col'))
+    elif len(args) == 1:
+        if 'nb_row' in kwargs and 'nb_col' in kwargs:
+            kernel_size = (kwargs.pop('nb_row'), kwargs.pop('nb_col'))
+            kwargs['kernel_size'] = kernel_size
             converted.append(('kernel_size', 'nb_row/nb_col'))
     return args, kwargs, converted
 
@@ -365,6 +406,13 @@ def conv3d_args_preprocessor(args, kwargs):
                            kwargs.pop('kernel_dim3'))
             args = [args[0], args[1], kernel_size]
             converted.append(('kernel_size', 'kernel_dim*'))
+    elif len(args) == 1:
+        if 'kernel_dim1' in kwargs and 'kernel_dim2' in kwargs and 'kernel_dim3' in kwargs:
+            kernel_size = (kwargs.pop('kernel_dim1'),
+                           kwargs.pop('kernel_dim2'),
+                           kwargs.pop('kernel_dim3'))
+            kwargs['kernel_size'] = kernel_size
+            converted.append(('kernel_size', 'nb_row/nb_col'))
     return args, kwargs, converted
 
 legacy_conv3d_support = generate_legacy_interface(
@@ -411,7 +459,7 @@ def convlstm2d_args_preprocessor(args, kwargs):
         else:
             warnings.warn('The `forget_bias_init` argument '
                           'has been ignored. Use `unit_forget_bias=True` '
-                          'instead to intialize with ones')
+                          'instead to intialize with ones.')
     args, kwargs, _converted = conv2d_args_preprocessor(args, kwargs)
     return args, kwargs, converted + _converted
 
@@ -442,7 +490,7 @@ legacy_batchnorm_support = generate_legacy_interface(
     preprocessor=batchnorm_args_preprocessor)
 
 
-def zeropadding2d_preprocessor(args, kwargs):
+def zeropadding2d_args_preprocessor(args, kwargs):
     converted = []
     if 'padding' in kwargs and isinstance(kwargs['padding'], dict):
         if set(kwargs['padding'].keys()) <= {'top_pad', 'bottom_pad',
@@ -454,7 +502,7 @@ def zeropadding2d_preprocessor(args, kwargs):
             kwargs['padding'] = ((top_pad, bottom_pad), (left_pad, right_pad))
             warnings.warn('The `padding` argument in the Keras 2 API no longer'
                           'accepts dict types. You can now input argument as: '
-                          '`padding`=(top_pad, bottom_pad, left_pad, right_pad)')
+                          '`padding=(top_pad, bottom_pad, left_pad, right_pad)`.')
     elif len(args) == 2 and isinstance(args[1], dict):
         if set(args[1].keys()) <= {'top_pad', 'bottom_pad',
                                    'left_pad', 'right_pad'}:
@@ -465,7 +513,7 @@ def zeropadding2d_preprocessor(args, kwargs):
             args = (args[0], ((top_pad, bottom_pad), (left_pad, right_pad)))
             warnings.warn('The `padding` argument in the Keras 2 API no longer'
                           'accepts dict types. You can now input argument as: '
-                          '`padding`=((top_pad, bottom_pad), (left_pad, right_pad))')
+                          '`padding=((top_pad, bottom_pad), (left_pad, right_pad))`')
     return args, kwargs, converted
 
 legacy_zeropadding2d_support = generate_legacy_interface(
@@ -474,7 +522,7 @@ legacy_zeropadding2d_support = generate_legacy_interface(
     value_conversions={'dim_ordering': {'tf': 'channels_last',
                                         'th': 'channels_first',
                                         'default': None}},
-    preprocessor=zeropadding2d_preprocessor)
+    preprocessor=zeropadding2d_args_preprocessor)
 
 legacy_zeropadding3d_support = generate_legacy_interface(
     allowed_positional_args=['padding'],
@@ -511,3 +559,44 @@ legacy_spatialdropoutNd_support = generate_legacy_interface(
 
 legacy_lambda_support = generate_legacy_interface(
     allowed_positional_args=['function', 'output_shape'])
+
+
+# Model methods
+
+def generator_methods_args_preprocessor(args, kwargs):
+    converted = []
+    if len(args) < 3:
+        if 'samples_per_epoch' in kwargs:
+            samples_per_epoch = kwargs.pop('samples_per_epoch')
+            if len(args) > 1:
+                generator = args[1]
+            else:
+                generator = kwargs['generator']
+            if hasattr(generator, 'batch_size'):
+                kwargs['steps_per_epoch'] = samples_per_epoch // generator.batch_size
+            else:
+                warnings.warn('The semantics of the Keras 2 argument '
+                              ' `steps_per_epoch` is not the same as the '
+                              'Keras 1 argument `samples_per_epoch`. '
+                              '`steps_per_epoch` is the number of batches '
+                              'to draw from the generator at each epoch. '
+                              'Update your method calls accordingly.')
+                kwargs['steps_per_epoch'] = samples_per_epoch
+            converted.append(('samples_per_epoch', 'steps_per_epoch'))
+    return args, kwargs, converted
+
+
+legacy_generator_methods_support = generate_legacy_method_interface(
+    allowed_positional_args=['generator', 'steps_per_epoch', 'epochs'],
+    conversions=[('samples_per_epoch', 'steps_per_epoch'),
+                 ('val_samples', 'steps'),
+                 ('nb_epoch', 'epochs'),
+                 ('nb_val_samples', 'validation_steps'),
+                 ('nb_worker', 'workers')],
+    preprocessor=generator_methods_args_preprocessor)
+
+
+legacy_model_constructor_support = generate_legacy_interface(
+    allowed_positional_args=None,
+    conversions=[('input', 'inputs'),
+                 ('output', 'outputs')])

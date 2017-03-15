@@ -22,6 +22,7 @@ from .. import losses
 from .. import metrics as metrics_module
 from ..utils.generic_utils import Progbar
 from .. import callbacks as cbks
+from ..legacy import interfaces
 
 
 def _standardize_input_data(data, names, shapes=None,
@@ -1327,7 +1328,8 @@ class Model(Container):
             shuffle=True,
             class_weight=None,
             sample_weight=None,
-            initial_epoch=0):
+            initial_epoch=0,
+            **kwargs):
         """Trains the model for a fixed number of epochs (iterations on a dataset).
 
         # Arguments
@@ -1386,6 +1388,14 @@ class Model(Container):
             ValueError: In case of mismatch between the provided input data
                 and what the model expects.
         """
+        # Legacy support
+        if 'nb_epoch' in kwargs:
+            warnings.warn('The `nb_epoch` argument in `fit` '
+                          'has been renamed `epochs`.')
+            epochs = kwargs.pop('nb_epoch')
+        if kwargs:
+            raise TypeError('Unrecognized keyword arguments: ' + str(kwargs))
+
         # validate user data
         x, y, sample_weights = self._standardize_user_data(
             x, y,
@@ -1508,7 +1518,7 @@ class Model(Container):
             check_batch_axis=False,
             batch_size=batch_size)
         # prepare inputs, delegate logic to _test_loop
-        if self.uses_learning_phase and not isinstance(K.learning_phase, int):
+        if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
             ins = x + y + sample_weights + [0.]
         else:
             ins = x + y + sample_weights
@@ -1552,7 +1562,7 @@ class Model(Container):
                                  'Batch size: ' + str(batch_size) + '.')
 
         # prepare inputs, delegate logic to _predict_loop
-        if self.uses_learning_phase and not isinstance(K.learning_phase, int):
+        if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
             ins = x + [0.]
         else:
             ins = x
@@ -1584,7 +1594,7 @@ class Model(Container):
                 In this case you should make sure to specify
                 sample_weight_mode="temporal" in compile().
             class_weight: optional dictionary mapping
-                lass indices (integers) to
+                class indices (integers) to
                 a weight (float) to apply to the model's loss for the samples
                 from this class during training.
                 This can be useful to tell the model to "pay more attention" to
@@ -1602,7 +1612,7 @@ class Model(Container):
             sample_weight=sample_weight,
             class_weight=class_weight,
             check_batch_axis=True)
-        if self.uses_learning_phase and not isinstance(K.learning_phase, int):
+        if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
             ins = x + y + sample_weights + [1.]
         else:
             ins = x + y + sample_weights
@@ -1644,7 +1654,7 @@ class Model(Container):
             x, y,
             sample_weight=sample_weight,
             check_batch_axis=True)
-        if self.uses_learning_phase and not isinstance(K.learning_phase, int):
+        if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
             ins = x + y + sample_weights + [0.]
         else:
             ins = x + y + sample_weights
@@ -1665,7 +1675,7 @@ class Model(Container):
         """
         x = _standardize_input_data(x, self._feed_input_names,
                                     self._feed_input_shapes)
-        if self.uses_learning_phase and not isinstance(K.learning_phase, int):
+        if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
             ins = x + [0.]
         else:
             ins = x
@@ -1675,6 +1685,7 @@ class Model(Container):
             return outputs[0]
         return outputs
 
+    @interfaces.legacy_generator_methods_support
     def fit_generator(self, generator,
                       steps_per_epoch,
                       epochs=1,
@@ -1911,6 +1922,7 @@ class Model(Container):
         callbacks.on_train_end()
         return self.history
 
+    @interfaces.legacy_generator_methods_support
     def evaluate_generator(self, generator, steps,
                            max_q_size=10, workers=1, pickle_safe=False):
         """Evaluates the model on a data generator.
@@ -2007,6 +2019,7 @@ class Model(Container):
                                            weights=batch_sizes))
             return averages
 
+    @interfaces.legacy_generator_methods_support
     def predict_generator(self, generator, steps,
                           max_q_size=10, workers=1, pickle_safe=False):
         """Generates predictions for the input samples from a data generator.

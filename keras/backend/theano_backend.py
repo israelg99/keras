@@ -16,6 +16,9 @@ except ImportError:
 import inspect
 import numpy as np
 from .common import _FLOATX, floatx, _EPSILON, image_data_format
+# Legacy functions
+from .common import set_image_dim_ordering, image_dim_ordering
+
 py_all = all
 py_sum = sum
 
@@ -982,8 +985,8 @@ def spatial_3d_padding(x, padding=((1, 1), (1, 1), (1, 1)), data_format=None):
     return T.set_subtensor(output[indices], x)
 
 
-def stack(x):
-    return T.stack(*x)
+def stack(x, axis=0):
+    return T.stack(x, axis=axis)
 
 
 def one_hot(indices, num_classes):
@@ -999,7 +1002,7 @@ def one_hot(indices, num_classes):
 
 
 def reverse(x, axes):
-    """Reverse a tensor along the the specified axes
+    """Reverse a tensor along the specified axes
     """
     if isinstance(axes, int):
         axes = [axes]
