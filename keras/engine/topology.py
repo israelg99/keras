@@ -679,11 +679,11 @@ class Layer(object):
                 input_shapes.append(K.int_shape(x_elem))
             else:
                 raise ValueError('You tried to call layer "' + self.name +
-                                '". This layer has no information'
-                                ' about its expected input shape, '
-                                'and thus cannot be built. '
-                                'You can build it manually via: '
-                                '`layer.build(batch_input_shape)`')
+                                 '". This layer has no information'
+                                 ' about its expected input shape, '
+                                 'and thus cannot be built. '
+                                 'You can build it manually via: '
+                                 '`layer.build(batch_input_shape)`')
         if len(input_shapes) == 1:
             self.build(input_shapes[0])
         else:
