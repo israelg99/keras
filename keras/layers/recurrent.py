@@ -254,6 +254,10 @@ class Recurrent(Layer):
         # modify the input spec to include the state.
         if initial_state is not None:
             if hasattr(initial_state, '_keras_history'):
+                with K.name_scope(self.name):
+                    if not self.built:
+                        self.call_build(inputs)
+
                 # Compute the full input spec, including state
                 input_spec = self.input_spec
                 state_spec = self.state_spec
